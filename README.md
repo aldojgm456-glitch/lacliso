@@ -3,11 +3,12 @@
 Painel de faturamento dos parceiros do Lacliso (Laboratório Clínico de Sobral).
 
 O `index.html` é só a tela de login: o painel e os números vêm **criptografados** dentro dele.
-O painel tem uma chave própria (AES-GCM), e cada usuário guarda uma cópia dela criptografada com
-o seu usuário + senha (PBKDF2-SHA256, 600 mil iterações). Sem uma senha válida, nem o site nem o
-repositório mostram o faturamento. Os nomes dos usuários não aparecem no arquivo, mas quem
-adivinhar um nome consegue confirmar que ele existe; a proteção está na senha, então use senhas
-longas: o arquivo é público e dá para testar senhas nele sem limite de tentativas.
+O painel tem uma chave própria (AES-GCM). Cada usuário tem um par de chaves RSA: a pública fica
+no arquivo e a privada vai criptografada com o seu usuário + senha (PBKDF2-SHA256, 600 mil
+iterações); a chave do painel é entregue a cada um pela chave pública. Sem uma senha válida, nem
+o site nem o repositório mostram o faturamento. Os nomes dos usuários não aparecem no arquivo,
+mas quem adivinhar um nome consegue confirmar que ele existe; a proteção está na senha, e por isso
+a ferramenta exige senhas de pelo menos 12 caracteres.
 
 O usuário não diferencia maiúsculas nem espaços extras; a senha diferencia.
 
@@ -29,7 +30,7 @@ Todo comando é rodado por um usuário que já existe (`LACLISO_USUARIO` e `LACL
 Criar um usuário, ou trocar a senha de um que já existe:
 
 ```bash
-LACLISO_USUARIO='seu usuário' LACLISO_SENHA='sua senha' NOVO_USUARIO='Fulano' NOVA_SENHA='senha-dele' node ferramentas/proteger.mjs adicionar
+LACLISO_USUARIO='seu usuário' LACLISO_SENHA='sua senha' NOVO_USUARIO='Fulano' NOVA_SENHA='uma-senha-longa-dele' node ferramentas/proteger.mjs adicionar
 ```
 
 Remover um usuário:
@@ -41,9 +42,9 @@ LACLISO_USUARIO='seu usuário' LACLISO_SENHA='sua senha' REMOVER_USUARIO='Fulano
 Depois faça commit do `index.html`.
 
 Os `index.html` antigos continuam no histórico do git e abrem com as senhas da época. Por isso,
-ao **remover alguém ou trocar uma senha**, o painel ganha uma chave nova e só ficam com acesso
-quem rodou o comando e o usuário da senha nova. Os demais precisam ser criados de novo com
-`adicionar` (o comando avisa quantos). Criar um usuário novo não mexe nos outros.
+ao **remover alguém ou trocar uma senha**, o painel ganha uma chave nova, entregue
+automaticamente a todos os outros usuários: ninguém mais perde o acesso, e a senha antiga ou o
+usuário removido só abrem as versões antigas.
 
 ## Atualizar o painel
 

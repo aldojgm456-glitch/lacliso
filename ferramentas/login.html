@@ -60,8 +60,8 @@ button:disabled{opacity:.6;cursor:wait}
 </main>
 <script>
 (()=>{ // escopo próprio: nada daqui fica global depois que o painel substitui a página
-// O painel vem criptografado (AES-GCM) com uma chave própria; cada usuário guarda uma cópia
-// dela, criptografada com uma chave derivada de usuário + senha (PBKDF2-SHA256).
+// O painel vem criptografado (AES-GCM) com uma chave própria. Cada usuário recebe essa chave
+// pela sua chave RSA, cuja parte privada vai criptografada com usuário + senha (PBKDF2-SHA256).
 // Gerado por ferramentas/proteger.mjs — não edite à mão.
 const PACOTE=/*PACOTE*/null;
 const CHAVE_SESSAO="lacliso-chave";
@@ -76,7 +76,9 @@ async function derivaChave(usuario,senha){
   const u=PACOTE.usuarios.find(x=>x.id===id); if(!u) throw new Error("usuário");
   const base=await crypto.subtle.importKey("raw",enc.encode(nome+"\n"+senha.normalize("NFC")),"PBKDF2",false,["deriveKey"]);
   const k=await crypto.subtle.deriveKey({name:"PBKDF2",hash:"SHA-256",salt:b64(u.salt),iterations:u.iter},base,{name:"AES-GCM",length:256},false,["decrypt"]);
-  const raw=await crypto.subtle.decrypt({name:"AES-GCM",iv:b64(u.iv)},k,b64(u.k));
+  const RSA={name:"RSA-OAEP",hash:"SHA-256"};
+  const priv=await crypto.subtle.importKey("pkcs8",await crypto.subtle.decrypt({name:"AES-GCM",iv:b64(u.iv)},k,b64(u.priv)),RSA,false,["decrypt"]);
+  const raw=await crypto.subtle.decrypt(RSA,priv,b64(u.k));
   return crypto.subtle.importKey("raw",raw,"AES-GCM",true,["decrypt"]);
 }
 async function abre(chave){
