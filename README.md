@@ -63,12 +63,42 @@ LACLISO_USUARIO='seu usuário' LACLISO_SENHA='sua senha' node ferramentas/proteg
 
 Depois faça commit só do `index.html`.
 
+## Banco de dados (Supabase)
+
+Os dados do painel (faturamento mensal, parceiros e contatos, observações, plano de ação, avisos e
+os lançamentos da aba Lançar) ficam num projeto do Supabase. As tabelas e as regras de acesso estão
+em `supabase/schema.sql`.
+
+1. No Supabase, abra **SQL Editor**, cole `supabase/schema.sql` e execute.
+2. Gere e carregue os dados atuais. O arquivo tem faturamento e contatos em texto puro, por isso
+   **não vai para o git**:
+
+   ```bash
+   LACLISO_USUARIO='seu usuário' LACLISO_SENHA='sua senha' node ferramentas/proteger.mjs abrir
+   node ferramentas/gerar-seed.mjs
+   ```
+
+   Cole `supabase/seed.sql` no SQL Editor e execute (pode repetir sem duplicar). Depois apague o arquivo.
+3. Em `painel.html`, preencha `SUPABASE.chave` com a chave **pública** do projeto (Project Settings,
+   API Keys: `anon` ou `publishable`; nunca a `service_role`), rode `proteger.mjs fechar` e faça
+   commit do `index.html`.
+
+Enquanto a chave estiver vazia, ou se o banco estiver fora do ar, o painel mostra os dados embutidos
+e os lançamentos ficam só no navegador (ou ficam desativados, se o banco estiver configurado mas não responder).
+
+**Segurança.** A chave pública fica dentro do painel, que só abre com usuário e senha, mas quem a
+obtiver consegue ler o banco. Por isso as tabelas de base são somente leitura para ela e só
+`lancamentos` aceita escrita. Para exigir login no próprio banco, use o Supabase Auth e troque
+`to anon, authenticated` por `to authenticated` nas políticas de `schema.sql`.
+
+A planilha importada na aba Dados continua valendo só no navegador de quem importou; ela não grava no banco.
+
 ## Onde ficam os dados
 
-- Os **lançamentos** (aba Lançar) ficam no `localStorage` deste navegador (`lacliso-lanc`).
-- Uma **planilha importada** (aba Dados) fica em `lacliso-dados`.
+- Com o banco configurado: no Supabase, compartilhados por todos os usuários. Os lançamentos novos de
+  outras pessoas aparecem em até 30 segundos.
+- Sem banco: os lançamentos ficam no `localStorage` do navegador (`lacliso-lanc`).
+- Uma **planilha importada** (aba Dados) fica em `lacliso-dados`, só neste navegador.
 - **Baixar planilha** gera o `.xlsx` direto pelo navegador.
-
-Outros navegadores ou computadores não veem esses dados; use Baixar/Importar planilha para levá-los.
 
 Chart.js 4.4.1 e SheetJS 0.18.5 estão em `vendor/`. Só as fontes vêm do Google Fonts.
