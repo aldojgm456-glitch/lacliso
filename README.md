@@ -8,7 +8,8 @@ no arquivo e a privada vai criptografada com o seu usuário + senha (PBKDF2-SHA2
 iterações); a chave do painel é entregue a cada um pela chave pública. Sem uma senha válida, nem
 o site nem o repositório mostram o faturamento. Os nomes dos usuários não aparecem no arquivo,
 mas quem adivinhar um nome consegue confirmar que ele existe; a proteção está na senha, e por isso
-a ferramenta exige senhas de pelo menos 12 caracteres.
+a ferramenta exige senhas de pelo menos 12 caracteres (para aceitar uma mais curta, defina
+`PERMITIR_SENHA_CURTA=1` no comando; não recomendado, porque o arquivo é público).
 
 O usuário não diferencia maiúsculas nem espaços extras; a senha diferencia.
 

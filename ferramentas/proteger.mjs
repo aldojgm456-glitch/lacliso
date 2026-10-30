@@ -66,7 +66,10 @@ async function entrega(pub, raw) {
 }
 
 async function entrada(usuario, senha, raw) {
-  if ([...senha].length < SENHA_MINIMA) erro(`A senha precisa ter pelo menos ${SENHA_MINIMA} caracteres.`);
+  if ([...senha].length < SENHA_MINIMA) {
+    if (process.env.PERMITIR_SENHA_CURTA !== "1") erro(`A senha precisa ter pelo menos ${SENHA_MINIMA} caracteres. Para aceitar mesmo assim, defina PERMITIR_SENHA_CURTA=1.`);
+    console.warn(`Aviso: senha com menos de ${SENHA_MINIMA} caracteres; quem baixar o index.html pode tentar adivinhá-la.`);
+  }
   const nome = normaliza(usuario), salt = aleatorio(16), iv = aleatorio(12);
   const par = await subtle.generateKey({ ...RSA, modulusLength: 3072, publicExponent: new Uint8Array([1, 0, 1]) }, true, ["encrypt", "decrypt"]);
   const k = await chaveDaSenha(nome, senha, salt, ITERACOES);
