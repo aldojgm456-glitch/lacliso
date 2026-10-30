@@ -12,6 +12,11 @@
 // Quem roda informa um usuário que já existe em LACLISO_USUARIO e LACLISO_SENHA.
 // "adicionar" lê NOVO_USUARIO e NOVA_SENHA; "remover" lê REMOVER_USUARIO.
 // Sem index.html, "fechar" cria o primeiro usuário a partir de LACLISO_USUARIO e LACLISO_SENHA.
+//
+// Os index.html antigos continuam no histórico do git, e cada um abre com as senhas da época.
+// Por isso remover alguém ou trocar uma senha gera uma chave nova para o painel: só quem roda
+// o comando (e o usuário com a senha nova) recebe a chave nova; os demais precisam ser criados
+// de novo com "adicionar".
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { webcrypto as crypto } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -39,13 +44,13 @@ function env(nome) {
 }
 
 // As mesmas regras de ferramentas/login.html.
-const normaliza = (usuario) => usuario.trim().replace(/\s+/g, " ").toLowerCase();
+const normaliza = (usuario) => usuario.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
 async function idDe(nome) {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode("lacliso-usuario:" + nome)));
   return Buffer.from(h.slice(0, 16)).toString("hex");
 }
 async function chaveDoUsuario(nome, senha, salt, iter) {
-  const base = await crypto.subtle.importKey("raw", enc.encode(nome + "\n" + senha), "PBKDF2", false, ["deriveKey"]);
+  const base = await crypto.subtle.importKey("raw", enc.encode(nome + "\n" + senha.normalize("NFC")), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
     { name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 }
@@ -99,6 +104,18 @@ async function decifraPainel(raw, p) {
   return dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: deb64(p.iv) }, await chaveDoPainel(raw), deb64(p.ct)));
 }
 
+// Criptografa o painel com uma chave nova e a entrega só aos usuários de "manter".
+async function rotaciona(p, rawAntiga, manter, msg, removidos = 0) {
+  const html = await decifraPainel(rawAntiga, p);
+  const raw = aleatorio(32), antes = p.usuarios.length;
+  p.usuarios = await Promise.all(manter.map((u) => entrada(u.usuario, u.senha, raw)));
+  Object.assign(p, await cifraPainel(raw, html));
+  grava(p, html);
+  const fora = antes - p.usuarios.length - removidos;
+  console.log(`${msg} O painel ganhou uma chave nova; usuários com acesso agora: ${p.usuarios.length}.`);
+  if (fora > 0) console.log(`Atenção: ${fora} outro(s) usuário(s) perderam o acesso e precisam ser criados de novo com "adicionar".`);
+}
+
 const comandos = {
   async abrir() {
     const p = lePacote() ?? erro("Não há index.html.");
@@ -121,21 +138,26 @@ const comandos = {
   async adicionar() {
     const p = lePacote() ?? erro('Não há index.html; rode "fechar" antes.');
     const raw = await destrava(p);
-    const novo = await entrada(env("NOVO_USUARIO"), env("NOVA_SENHA"), raw);
-    const trocou = p.usuarios.some((x) => x.id === novo.id);
-    p.usuarios = [...p.usuarios.filter((x) => x.id !== novo.id), novo];
-    grava(p, await decifraPainel(raw, p));
-    console.log(`${trocou ? "Senha trocada" : "Usuário criado"}: "${normaliza(env("NOVO_USUARIO"))}". Total: ${p.usuarios.length}.`);
+    const nome = normaliza(env("NOVO_USUARIO")), id = await idDe(nome);
+    if (!p.usuarios.some((x) => x.id === id)) {
+      p.usuarios.push(await entrada(nome, env("NOVA_SENHA"), raw));
+      grava(p, await decifraPainel(raw, p));
+      console.log(`Usuário criado: "${nome}". Total: ${p.usuarios.length}.`);
+      return;
+    }
+    // Trocar a senha: a senha antiga ainda abre os index.html do histórico, então a chave muda.
+    const eu = normaliza(env("LACLISO_USUARIO"));
+    const manter = [{ usuario: nome, senha: env("NOVA_SENHA") }];
+    if (eu !== nome) manter.push({ usuario: eu, senha: env("LACLISO_SENHA") });
+    await rotaciona(p, raw, manter, `Senha de "${nome}" trocada.`);
   },
   async remover() {
     const p = lePacote() ?? erro("Não há index.html.");
     const raw = await destrava(p);
-    const id = await idDe(normaliza(env("REMOVER_USUARIO")));
+    const nome = normaliza(env("REMOVER_USUARIO")), id = await idDe(nome);
     if (!p.usuarios.some((x) => x.id === id)) erro("Esse usuário não existe.");
-    if (p.usuarios.length === 1) erro("Não dá para remover o único usuário.");
-    p.usuarios = p.usuarios.filter((x) => x.id !== id);
-    grava(p, await decifraPainel(raw, p));
-    console.log(`Usuário removido. Total: ${p.usuarios.length}.`);
+    if (nome === normaliza(env("LACLISO_USUARIO"))) erro("Rode este comando com outro usuário: não dá para remover a si mesmo.");
+    await rotaciona(p, raw, [{ usuario: env("LACLISO_USUARIO"), senha: env("LACLISO_SENHA") }], `Usuário "${nome}" removido.`, 1);
   },
   async listar() {
     const p = lePacote() ?? erro("Não há index.html.");
