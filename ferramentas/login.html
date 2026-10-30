@@ -59,16 +59,24 @@ button:disabled{opacity:.6;cursor:wait}
   </form>
 </main>
 <script>
-// O painel vem criptografado (AES-GCM; chave derivada de usuário + senha com PBKDF2-SHA256).
+// O painel vem criptografado (AES-GCM) com uma chave própria; cada usuário guarda uma cópia
+// dela, criptografada com uma chave derivada de usuário + senha (PBKDF2-SHA256).
 // Gerado por ferramentas/proteger.mjs — não edite à mão.
 const PACOTE=/*PACOTE*/null;
 const CHAVE_SESSAO="lacliso-chave";
 const b64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
-const dec=new TextDecoder();
+const enc=new TextEncoder(), dec=new TextDecoder();
+const normaliza=u=>u.trim().replace(/\s+/g," ").toLowerCase();
 
 async function derivaChave(usuario,senha){
-  const base=await crypto.subtle.importKey("raw",new TextEncoder().encode(usuario.trim().toLowerCase()+"\n"+senha),"PBKDF2",false,["deriveKey"]);
-  return crypto.subtle.deriveKey({name:"PBKDF2",hash:"SHA-256",salt:b64(PACOTE.salt),iterations:PACOTE.iter},base,{name:"AES-GCM",length:256},true,["decrypt"]);
+  const nome=normaliza(usuario);
+  const h=new Uint8Array(await crypto.subtle.digest("SHA-256",enc.encode("lacliso-usuario:"+nome)));
+  const id=[...h.slice(0,16)].map(x=>x.toString(16).padStart(2,"0")).join("");
+  const u=PACOTE.usuarios.find(x=>x.id===id); if(!u) throw new Error("usuário");
+  const base=await crypto.subtle.importKey("raw",enc.encode(nome+"\n"+senha),"PBKDF2",false,["deriveKey"]);
+  const k=await crypto.subtle.deriveKey({name:"PBKDF2",hash:"SHA-256",salt:b64(u.salt),iterations:u.iter},base,{name:"AES-GCM",length:256},false,["decrypt"]);
+  const raw=await crypto.subtle.decrypt({name:"AES-GCM",iv:b64(u.iv)},k,b64(u.k));
+  return crypto.subtle.importKey("raw",raw,"AES-GCM",true,["decrypt"]);
 }
 async function abre(chave){
   const html=dec.decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:b64(PACOTE.iv)},chave,b64(PACOTE.ct)));

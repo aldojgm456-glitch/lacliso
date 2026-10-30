@@ -1,11 +1,18 @@
-// Protege o painel com usuário e senha.
+// Protege o painel com usuários e senhas.
 //
-//   node ferramentas/proteger.mjs fechar   painel.html  -> index.html (criptografado)
-//   node ferramentas/proteger.mjs abrir    index.html   -> painel.html (texto puro, fora do git)
+// O painel é criptografado com uma chave própria (AES-GCM); cada usuário guarda uma
+// cópia dessa chave, criptografada com uma chave derivada do seu usuário + senha (PBKDF2).
 //
-// Usuário e senha vêm de LACLISO_USUARIO e LACLISO_SENHA. Para trocar a senha:
-// "abrir" com a senha atual e "fechar" com a nova.
-import { readFileSync, writeFileSync } from "node:fs";
+//   node ferramentas/proteger.mjs abrir       index.html  -> painel.html (texto puro, fora do git)
+//   node ferramentas/proteger.mjs fechar      painel.html -> index.html
+//   node ferramentas/proteger.mjs adicionar   cria um usuário ou troca a senha dele
+//   node ferramentas/proteger.mjs remover     remove um usuário
+//   node ferramentas/proteger.mjs listar      mostra quantos usuários existem
+//
+// Quem roda informa um usuário que já existe em LACLISO_USUARIO e LACLISO_SENHA.
+// "adicionar" lê NOVO_USUARIO e NOVA_SENHA; "remover" lê REMOVER_USUARIO.
+// Sem index.html, "fechar" cria o primeiro usuário a partir de LACLISO_USUARIO e LACLISO_SENHA.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { webcrypto as crypto } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -18,66 +25,124 @@ const ITERACOES = 600000;
 
 const b64 = (u8) => Buffer.from(u8).toString("base64");
 const deb64 = (s) => new Uint8Array(Buffer.from(s, "base64"));
+const aleatorio = (n) => crypto.getRandomValues(new Uint8Array(n));
+const enc = new TextEncoder(), dec = new TextDecoder();
 
-function credenciais() {
-  const usuario = process.env.LACLISO_USUARIO, senha = process.env.LACLISO_SENHA;
-  if (!usuario || !senha) {
-    console.error("Defina LACLISO_USUARIO e LACLISO_SENHA.");
-    process.exit(1);
-  }
-  return { usuario, senha };
+function erro(msg) {
+  console.error(msg);
+  process.exit(1);
+}
+function env(nome) {
+  const v = process.env[nome];
+  if (!v) erro(`Defina ${nome}.`);
+  return v;
 }
 
-// Mesma derivação de ferramentas/login.html.
-async function chave(usuario, senha, salt, iter) {
-  const base = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(usuario.trim().toLowerCase() + "\n" + senha), "PBKDF2", false, ["deriveKey"]);
+// As mesmas regras de ferramentas/login.html.
+const normaliza = (usuario) => usuario.trim().replace(/\s+/g, " ").toLowerCase();
+async function idDe(nome) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode("lacliso-usuario:" + nome)));
+  return Buffer.from(h.slice(0, 16)).toString("hex");
+}
+async function chaveDoUsuario(nome, senha, salt, iter) {
+  const base = await crypto.subtle.importKey("raw", enc.encode(nome + "\n" + senha), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
     { name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 }
+const chaveDoPainel = (raw) => crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
 
-function pacoteDe(html) {
-  const m = html.match(/const PACOTE=(\{.*?\});/s);
-  if (!m) throw new Error("index.html não tem um painel criptografado.");
-  return JSON.parse(m[1]);
+async function entrada(usuario, senha, rawPainel) {
+  const nome = normaliza(usuario), salt = aleatorio(16), iv = aleatorio(12);
+  const k = await chaveDoUsuario(nome, senha, salt, ITERACOES);
+  const embrulho = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, k, rawPainel));
+  return { id: await idDe(nome), iter: ITERACOES, salt: b64(salt), iv: b64(iv), k: b64(embrulho) };
 }
 
-async function fechar() {
-  const { usuario, senha } = credenciais();
-  const painel = readFileSync(PAINEL, "utf8");
-  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
-  const k = await chave(usuario, senha, salt, ITERACOES);
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, k, new TextEncoder().encode(painel)));
-  const pacote = { v: 1, iter: ITERACOES, salt: b64(salt), iv: b64(iv), ct: b64(ct) };
+function lePacote() {
+  if (!existsSync(INDEX)) return null;
+  const m = readFileSync(INDEX, "utf8").match(/const PACOTE=(\{.*?\});/s);
+  if (!m) erro("index.html não tem um painel criptografado.");
+  const p = JSON.parse(m[1]);
+  if (p.v !== 2) erro("index.html está num formato antigo; abra-o com a versão anterior desta ferramenta.");
+  return p;
+}
 
-  const i = painel.indexOf('<span class="logo">'), j = painel.indexOf("</svg></span>", i);
-  const logo = i < 0 || j < 0 ? "" : painel.slice(i, j + "</svg></span>".length);
+// Devolve a chave do painel (bytes) usando o usuário e a senha de quem está rodando.
+async function destrava(p) {
+  const nome = normaliza(env("LACLISO_USUARIO")), senha = env("LACLISO_SENHA");
+  const id = await idDe(nome);
+  const u = p.usuarios.find((x) => x.id === id);
+  if (!u) erro("Usuário ou senha incorretos.");
+  try {
+    const k = await chaveDoUsuario(nome, senha, deb64(u.salt), u.iter);
+    return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: deb64(u.iv) }, k, deb64(u.k)));
+  } catch {
+    erro("Usuário ou senha incorretos.");
+  }
+}
+
+function grava(p, html) {
+  const i = html.indexOf('<span class="logo">'), j = html.indexOf("</svg></span>", i);
+  const logo = i < 0 || j < 0 ? "" : html.slice(i, j + "</svg></span>".length);
   const login = readFileSync(LOGIN, "utf8")
     .replace("<!--LOGO-->", () => logo)
-    .replace("/*PACOTE*/null", () => JSON.stringify(pacote));
+    .replace("/*PACOTE*/null", () => JSON.stringify(p));
   writeFileSync(INDEX, login);
-  console.log(`index.html gerado (${(login.length / 1024).toFixed(0)} KB) para o usuário "${usuario.trim().toLowerCase()}".`);
 }
 
-async function abrir() {
-  const { usuario, senha } = credenciais();
-  const p = pacoteDe(readFileSync(INDEX, "utf8"));
-  const k = await chave(usuario, senha, deb64(p.salt), p.iter);
-  let html;
-  try {
-    html = new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: deb64(p.iv) }, k, deb64(p.ct)));
-  } catch {
-    console.error("Usuário ou senha incorretos.");
-    process.exit(1);
-  }
-  writeFileSync(PAINEL, html);
-  console.log("painel.html aberto. Ele fica fora do git; edite e rode \"fechar\" de novo.");
+async function cifraPainel(raw, html) {
+  const iv = aleatorio(12);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await chaveDoPainel(raw), enc.encode(html)));
+  return { iv: b64(iv), ct: b64(ct) };
+}
+async function decifraPainel(raw, p) {
+  return dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: deb64(p.iv) }, await chaveDoPainel(raw), deb64(p.ct)));
 }
 
-const cmd = process.argv[2];
-if (cmd === "fechar") await fechar();
-else if (cmd === "abrir") await abrir();
-else {
-  console.error("Uso: node ferramentas/proteger.mjs fechar|abrir");
-  process.exit(1);
-}
+const comandos = {
+  async abrir() {
+    const p = lePacote() ?? erro("Não há index.html.");
+    writeFileSync(PAINEL, await decifraPainel(await destrava(p), p));
+    console.log('painel.html aberto. Ele fica fora do git; edite e rode "fechar" de novo.');
+  },
+  async fechar() {
+    if (!existsSync(PAINEL)) erro('Não há painel.html; rode "abrir" antes.');
+    const html = readFileSync(PAINEL, "utf8");
+    let p = lePacote(), raw;
+    if (p) raw = await destrava(p);
+    else {
+      raw = aleatorio(32);
+      p = { v: 2, usuarios: [await entrada(env("LACLISO_USUARIO"), env("LACLISO_SENHA"), raw)] };
+    }
+    Object.assign(p, await cifraPainel(raw, html));
+    grava(p, html);
+    console.log(`index.html gerado com ${p.usuarios.length} usuário(s).`);
+  },
+  async adicionar() {
+    const p = lePacote() ?? erro('Não há index.html; rode "fechar" antes.');
+    const raw = await destrava(p);
+    const novo = await entrada(env("NOVO_USUARIO"), env("NOVA_SENHA"), raw);
+    const trocou = p.usuarios.some((x) => x.id === novo.id);
+    p.usuarios = [...p.usuarios.filter((x) => x.id !== novo.id), novo];
+    grava(p, await decifraPainel(raw, p));
+    console.log(`${trocou ? "Senha trocada" : "Usuário criado"}: "${normaliza(env("NOVO_USUARIO"))}". Total: ${p.usuarios.length}.`);
+  },
+  async remover() {
+    const p = lePacote() ?? erro("Não há index.html.");
+    const raw = await destrava(p);
+    const id = await idDe(normaliza(env("REMOVER_USUARIO")));
+    if (!p.usuarios.some((x) => x.id === id)) erro("Esse usuário não existe.");
+    if (p.usuarios.length === 1) erro("Não dá para remover o único usuário.");
+    p.usuarios = p.usuarios.filter((x) => x.id !== id);
+    grava(p, await decifraPainel(raw, p));
+    console.log(`Usuário removido. Total: ${p.usuarios.length}.`);
+  },
+  async listar() {
+    const p = lePacote() ?? erro("Não há index.html.");
+    console.log(`${p.usuarios.length} usuário(s). Os nomes não ficam no arquivo, só um resumo (hash) de cada um.`);
+  },
+};
+
+const cmd = comandos[process.argv[2]];
+if (!cmd) erro("Uso: node ferramentas/proteger.mjs abrir|fechar|adicionar|remover|listar");
+await cmd();
