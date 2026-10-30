@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Entrar | Lacliso</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --verde:#49C08F; --verde-forte:#2E8F69; --menta:#E7F3ED; --tinta:#1F2B27; --texto2:#5A6266;
+  --papel:#F6F9F7; --sup:#FFFFFF; --linha:#DCE7E1; --queda:#C4573D; --logo-cinza:#70767B;
+  --fonte-titulo:"Montserrat","Segoe UI",Arial,sans-serif; --fonte-texto:"Source Sans 3","Segoe UI",Arial,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --verde:#55C998; --verde-forte:#7BD8AE; --menta:#1C2B25; --tinta:#E8EFEB; --texto2:#A9B3AF;
+    --papel:#121A17; --sup:#18231F; --linha:#2A3A33; --queda:#F08A6E; --logo-cinza:#C9CFD2;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --verde:#55C998; --verde-forte:#7BD8AE; --menta:#1C2B25; --tinta:#E8EFEB; --texto2:#A9B3AF;
+  --papel:#121A17; --sup:#18231F; --linha:#2A3A33; --queda:#F08A6E; --logo-cinza:#C9CFD2;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px 16px;background:var(--papel);color:var(--tinta);font-family:var(--fonte-texto);font-size:16px;line-height:1.5}
+.cartao{width:min(400px,100%);background:var(--sup);border:1px solid var(--linha);border-top:4px solid var(--verde);border-radius:16px;padding:28px 26px 24px}
+.logo{display:block;line-height:0;margin-bottom:22px}
+.logo svg{display:block;height:auto;width:100%;max-width:240px}
+.logo [fill="rgb(43.864441%, 46.289062%, 48.146057%)"]{fill:var(--logo-cinza)}
+h1{font-family:var(--fonte-titulo);font-size:20px;font-weight:700;margin:0 0 4px}
+p{margin:0 0 18px;color:var(--texto2);font-size:15px}
+label{display:block;font-size:13px;font-weight:600;color:var(--texto2);margin:12px 0 4px}
+input{width:100%;font:inherit;color:inherit;background:var(--papel);border:1px solid var(--linha);border-radius:10px;padding:10px 12px}
+input:focus{outline:none;border-color:var(--verde);box-shadow:0 0 0 3px var(--menta)}
+button{margin-top:20px;width:100%;border:0;background:var(--verde);color:#0F2A1F;font:inherit;font-weight:700;border-radius:10px;padding:11px 16px;cursor:pointer}
+button:disabled{opacity:.6;cursor:wait}
+:focus-visible{outline:3px solid var(--verde);outline-offset:2px}
+.erro{min-height:1.5em;margin:12px 0 0;color:var(--queda);font-weight:600;font-size:14px}
+</style>
+</head>
+<body>
+<main class="cartao">
+  <!--LOGO-->
+  <h1>Faturamento dos parceiros</h1>
+  <p>Acesso restrito. Entre com seu usuário e senha.</p>
+  <form id="f" autocomplete="on">
+    <label for="u">Usuário</label>
+    <input id="u" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="s">Senha</label>
+    <input id="s" name="password" type="password" autocomplete="current-password" required>
+    <button id="b" type="submit">Entrar</button>
+    <div class="erro" id="e" role="alert"></div>
+  </form>
+</main>
+<script>
+// O painel vem criptografado (AES-GCM; chave derivada de usuário + senha com PBKDF2-SHA256).
+// Gerado por ferramentas/proteger.mjs — não edite à mão.
+const PACOTE=/*PACOTE*/null;
+const CHAVE_SESSAO="lacliso-chave";
+const b64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const dec=new TextDecoder();
+
+async function derivaChave(usuario,senha){
+  const base=await crypto.subtle.importKey("raw",new TextEncoder().encode(usuario.trim().toLowerCase()+"\n"+senha),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",hash:"SHA-256",salt:b64(PACOTE.salt),iterations:PACOTE.iter},base,{name:"AES-GCM",length:256},true,["decrypt"]);
+}
+async function abre(chave){
+  const html=dec.decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:b64(PACOTE.iv)},chave,b64(PACOTE.ct)));
+  try{const raw=new Uint8Array(await crypto.subtle.exportKey("raw",chave));sessionStorage.setItem(CHAVE_SESSAO,PACOTE.iv+":"+btoa(String.fromCharCode(...raw)))}catch(_){}
+  document.open(); document.write(html); document.close();
+}
+(async()=>{ // reabre sem pedir a senha de novo enquanto a aba estiver aberta
+  try{
+    const [iv,k]=(sessionStorage.getItem(CHAVE_SESSAO)||"").split(":");
+    if(iv===PACOTE.iv&&k) await abre(await crypto.subtle.importKey("raw",b64(k),"AES-GCM",true,["decrypt"]));
+  }catch(_){try{sessionStorage.removeItem(CHAVE_SESSAO)}catch(_){}}
+})();
+document.getElementById("f").addEventListener("submit",async ev=>{
+  ev.preventDefault();
+  const b=document.getElementById("b"), e=document.getElementById("e");
+  b.disabled=true; b.textContent="Entrando…"; e.textContent="";
+  try{ await abre(await derivaChave(document.getElementById("u").value,document.getElementById("s").value)); }
+  catch(_){ e.textContent="Usuário ou senha incorretos."; b.disabled=false; b.textContent="Entrar"; document.getElementById("s").select(); }
+});
+</script>
+</body>
+</html>
