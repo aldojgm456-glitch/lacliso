@@ -66,10 +66,10 @@ create table if not exists public.lancamentos (
 );
 
 -- ------------------------------------------------------- acesso (RLS)
--- O painel usa a chave pública (anon). Ela fica dentro do painel, que só abre com usuário e senha,
--- mas quem a obtiver consegue ler o banco: por isso as tabelas de base ficam SOMENTE LEITURA e só
--- "lancamentos" aceita escrita. Para exigir login no próprio banco, use o Supabase Auth e troque
--- "to anon, authenticated" por "to authenticated" nas políticas abaixo.
+-- Só a conta do painel (painel@lacliso.app, criada em Authentication > Users) lê e grava.
+-- A chave pública (anon) sozinha não acessa nada. A senha dessa conta fica dentro do painel
+-- criptografado, que só abre com usuário e senha. Mesmo que alguém crie outra conta no Auth,
+-- as políticas conferem o e-mail, então ela não enxerga nada.
 
 alter table public.parceiros     enable row level security;
 alter table public.faturamento   enable row level security;
@@ -81,24 +81,29 @@ alter table public.lancamentos   enable row level security;
 revoke all on public.parceiros, public.faturamento, public.notas, public.plano_acao,
               public.ajustes_dados, public.lancamentos from anon, authenticated;
 grant select on public.parceiros, public.faturamento, public.notas, public.plano_acao,
-                public.ajustes_dados, public.lancamentos to anon, authenticated;
-grant insert, update, delete on public.lancamentos to anon, authenticated;
+                public.ajustes_dados, public.lancamentos to authenticated;
+grant insert, update, delete on public.lancamentos to authenticated;
 
 do $$
 declare t text;
 begin
   foreach t in array array['parceiros', 'faturamento', 'notas', 'plano_acao', 'ajustes_dados', 'lancamentos'] loop
     execute format('drop policy if exists leitura on public.%I', t);
-    execute format('create policy leitura on public.%I for select to anon, authenticated using (true)', t);
+    execute format($p$create policy leitura on public.%I for select to authenticated
+      using ((select auth.jwt() ->> 'email') = 'painel@lacliso.app')$p$, t);
   end loop;
 end $$;
 
 drop policy if exists escrita_insere on public.lancamentos;
 drop policy if exists escrita_altera on public.lancamentos;
 drop policy if exists escrita_apaga  on public.lancamentos;
-create policy escrita_insere on public.lancamentos for insert to anon, authenticated with check (true);
-create policy escrita_altera on public.lancamentos for update to anon, authenticated using (true) with check (true);
-create policy escrita_apaga  on public.lancamentos for delete to anon, authenticated using (true);
+create policy escrita_insere on public.lancamentos for insert to authenticated
+  with check ((select auth.jwt() ->> 'email') = 'painel@lacliso.app');
+create policy escrita_altera on public.lancamentos for update to authenticated
+  using ((select auth.jwt() ->> 'email') = 'painel@lacliso.app')
+  with check ((select auth.jwt() ->> 'email') = 'painel@lacliso.app');
+create policy escrita_apaga  on public.lancamentos for delete to authenticated
+  using ((select auth.jwt() ->> 'email') = 'painel@lacliso.app');
 
 -- Atualiza a data do lançamento a cada alteração.
 create or replace function public.lancamentos_atualizado() returns trigger
